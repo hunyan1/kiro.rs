@@ -193,6 +193,17 @@ impl BlockState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FinalUsage<'a> {
+    input_tokens: i32,
+    output_tokens: i32,
+    cache_creation_input_tokens: i32,
+    cache_read_input_tokens: i32,
+    cache_creation_5m_input_tokens: i32,
+    cache_creation_1h_input_tokens: i32,
+    metering: Option<&'a MeteringEvent>,
+}
+
 /// SSE 状态管理器
 ///
 /// 确保 SSE 事件序列符合 Claude API 规范：
@@ -405,16 +416,7 @@ impl SseStateManager {
     }
 
     /// 生成最终事件序列
-    pub fn generate_final_events(
-        &mut self,
-        input_tokens: i32,
-        output_tokens: i32,
-        cache_creation_input_tokens: i32,
-        cache_read_input_tokens: i32,
-        cache_creation_5m_input_tokens: i32,
-        cache_creation_1h_input_tokens: i32,
-        metering: Option<&MeteringEvent>,
-    ) -> Vec<SseEvent> {
+    pub fn generate_final_events(&mut self, usage: FinalUsage<'_>) -> Vec<SseEvent> {
         let mut events = Vec::new();
 
         // 关闭所有未关闭的块
@@ -434,20 +436,20 @@ impl SseStateManager {
         // 发送 message_delta
         if !self.message_delta_sent {
             self.message_delta_sent = true;
-            let mut usage = json!({
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cache_creation_input_tokens": cache_creation_input_tokens,
-                "cache_read_input_tokens": cache_read_input_tokens,
+            let mut usage_json = json!({
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                "cache_read_input_tokens": usage.cache_read_input_tokens,
                 "cache_creation": {
-                    "ephemeral_5m_input_tokens": cache_creation_5m_input_tokens,
-                    "ephemeral_1h_input_tokens": cache_creation_1h_input_tokens
+                    "ephemeral_5m_input_tokens": usage.cache_creation_5m_input_tokens,
+                    "ephemeral_1h_input_tokens": usage.cache_creation_1h_input_tokens
                 }
             });
-            if let Some(metering) = metering {
-                usage["credit_usage"] = json!(metering.usage);
-                usage["credit_unit"] = json!(metering.unit);
-                usage["credit_unit_plural"] = json!(metering.unit_plural);
+            if let Some(metering) = usage.metering {
+                usage_json["credit_usage"] = json!(metering.usage);
+                usage_json["credit_unit"] = json!(metering.unit);
+                usage_json["credit_unit_plural"] = json!(metering.unit_plural);
             }
             events.push(SseEvent::new(
                 "message_delta",
@@ -457,7 +459,7 @@ impl SseStateManager {
                         "stop_reason": self.get_stop_reason(),
                         "stop_sequence": null
                     },
-                    "usage": usage
+                    "usage": usage_json
                 }),
             ));
         }
@@ -1118,15 +1120,15 @@ impl StreamContext {
         );
 
         // 生成最终事件
-        events.extend(self.state_manager.generate_final_events(
-            billed_input_tokens,
-            self.output_tokens,
-            self.cache_creation_input_tokens,
-            self.cache_read_input_tokens,
-            self.cache_creation_5m_input_tokens,
-            self.cache_creation_1h_input_tokens,
-            self.metering.as_ref(),
-        ));
+        events.extend(self.state_manager.generate_final_events(FinalUsage {
+            input_tokens: billed_input_tokens,
+            output_tokens: self.output_tokens,
+            cache_creation_input_tokens: self.cache_creation_input_tokens,
+            cache_read_input_tokens: self.cache_read_input_tokens,
+            cache_creation_5m_input_tokens: self.cache_creation_5m_input_tokens,
+            cache_creation_1h_input_tokens: self.cache_creation_1h_input_tokens,
+            metering: self.metering.as_ref(),
+        }));
         events
     }
 }

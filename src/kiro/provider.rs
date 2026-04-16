@@ -195,10 +195,10 @@ impl KiroProvider {
         let os_name = &config.system_version;
         let node_version = &config.node_version;
 
-        let x_amz_user_agent = format!("aws-sdk-js/1.0.27 KiroIDE-{}-{}", kiro_version, machine_id);
+        let x_amz_user_agent = format!("aws-sdk-js/1.0.34 KiroIDE-{}-{}", kiro_version, machine_id);
 
         let user_agent = format!(
-            "aws-sdk-js/1.0.27 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.27 m/E KiroIDE-{}-{}",
+            "aws-sdk-js/1.0.34 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.34 m/E KiroIDE-{}-{}",
             os_name, node_version, kiro_version, machine_id
         );
 
@@ -250,10 +250,10 @@ impl KiroProvider {
         let os_name = &config.system_version;
         let node_version = &config.node_version;
 
-        let x_amz_user_agent = format!("aws-sdk-js/1.0.27 KiroIDE-{}-{}", kiro_version, machine_id);
+        let x_amz_user_agent = format!("aws-sdk-js/1.0.34 KiroIDE-{}-{}", kiro_version, machine_id);
 
         let user_agent = format!(
-            "aws-sdk-js/1.0.27 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.27 m/E KiroIDE-{}-{}",
+            "aws-sdk-js/1.0.34 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererstreaming#1.0.34 m/E KiroIDE-{}-{}",
             os_name, node_version, kiro_version, machine_id
         );
 
@@ -270,6 +270,13 @@ impl KiroProvider {
             "host",
             HeaderValue::from_str(&self.base_domain(&ctx.credentials))?,
         );
+
+        if let Some(profile_arn) = Self::mcp_profile_arn_header_value(&ctx.credentials) {
+            headers.insert(
+                "x-amzn-kiro-profile-arn",
+                HeaderValue::from_str(profile_arn)?,
+            );
+        }
 
         headers.insert(
             "amz-sdk-invocation-id",
@@ -845,6 +852,20 @@ impl KiroProvider {
         }))
     }
 
+    fn is_aws_sso_oidc_credentials(credentials: &KiroCredentials) -> bool {
+        let auth_method = credentials.auth_method.as_deref();
+        matches!(auth_method, Some("builder-id") | Some("idc"))
+            || (credentials.client_id.is_some() && credentials.client_secret.is_some())
+    }
+
+    fn mcp_profile_arn_header_value(credentials: &KiroCredentials) -> Option<&str> {
+        if Self::is_aws_sso_oidc_credentials(credentials) {
+            return None;
+        }
+
+        credentials.profile_arn.as_deref()
+    }
+
     /// 根据认证方式处理请求体中的 profileArn 字段
     ///
     /// 参考 CLIProxyAPIPlus 的 getEffectiveProfileArn 实现：
@@ -863,11 +884,7 @@ impl KiroProvider {
         let auth_method = credentials.auth_method.as_deref();
 
         // AWS SSO OIDC (Builder ID/IDC) - 不需要 profileArn，发送会导致 403
-        // 同时检查 client_id + client_secret 的存在（AWS SSO OIDC 的特征）
-        let is_aws_sso_oidc = matches!(auth_method, Some("builder-id") | Some("idc"))
-            || (credentials.client_id.is_some() && credentials.client_secret.is_some());
-
-        if is_aws_sso_oidc {
+        if Self::is_aws_sso_oidc_credentials(credentials) {
             // 解析请求体，移除 profileArn 字段
             let mut request: serde_json::Value = serde_json::from_str(request_body)?;
 
@@ -885,7 +902,7 @@ impl KiroProvider {
 
         // Social auth - 需要 profileArn
         // 凭据没有 profile_arn 时，保持请求体不变
-        let Some(profile_arn) = &credentials.profile_arn else {
+        let Some(profile_arn) = Self::mcp_profile_arn_header_value(credentials) else {
             return Ok(request_body.to_string());
         };
 
@@ -900,7 +917,7 @@ impl KiroProvider {
         // 注入 profile_arn（覆盖原有值）
         obj.insert(
             "profileArn".to_string(),
-            serde_json::Value::String(profile_arn.clone()),
+            serde_json::Value::String(profile_arn.to_string()),
         );
 
         // 序列化回字符串
@@ -1207,6 +1224,59 @@ mod tests {
                 .starts_with("Bearer ")
         );
         assert_eq!(headers.get(CONNECTION).unwrap(), "close");
+    }
+
+    #[test]
+    fn test_build_mcp_headers_includes_profile_arn_for_social_auth() {
+        let mut config = Config::default();
+        config.region = "us-east-1".to_string();
+        config.kiro_version = "0.8.0".to_string();
+
+        let mut credentials = KiroCredentials::default();
+        credentials.auth_method = Some("social".to_string());
+        credentials.profile_arn = Some("arn:aws:sso::123456789:profile/test".to_string());
+        credentials.refresh_token = Some("a".repeat(150));
+
+        let provider = create_test_provider(config, credentials.clone());
+        let ctx = CallContext {
+            id: 1,
+            credentials,
+            token: "test_token".to_string(),
+        };
+        let headers = provider.build_mcp_headers(&ctx).unwrap();
+
+        assert_eq!(
+            headers
+                .get("x-amzn-kiro-profile-arn")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "arn:aws:sso::123456789:profile/test"
+        );
+    }
+
+    #[test]
+    fn test_build_mcp_headers_omits_profile_arn_for_idc_auth() {
+        let mut config = Config::default();
+        config.region = "us-east-1".to_string();
+        config.kiro_version = "0.8.0".to_string();
+
+        let mut credentials = KiroCredentials::default();
+        credentials.auth_method = Some("idc".to_string());
+        credentials.profile_arn = Some("arn:aws:sso::123456789:profile/test".to_string());
+        credentials.client_id = Some("client".to_string());
+        credentials.client_secret = Some("secret".to_string());
+        credentials.refresh_token = Some("a".repeat(150));
+
+        let provider = create_test_provider(config, credentials.clone());
+        let ctx = CallContext {
+            id: 1,
+            credentials,
+            token: "test_token".to_string(),
+        };
+        let headers = provider.build_mcp_headers(&ctx).unwrap();
+
+        assert!(headers.get("x-amzn-kiro-profile-arn").is_none());
     }
 
     #[test]

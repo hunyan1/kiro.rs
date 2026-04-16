@@ -232,12 +232,11 @@ impl std::error::Error for ConversionError {}
 /// 提取 session UUID 作为 conversationId
 fn extract_session_id(user_id: &str) -> Option<String> {
     // 先尝试 JSON 格式解析
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(user_id) {
-        if let Some(session_id) = json.get("session_id").and_then(|v| v.as_str()) {
-            if is_valid_uuid(session_id) {
-                return Some(session_id.to_string());
-            }
-        }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(user_id)
+        && let Some(session_id) = json.get("session_id").and_then(|v| v.as_str())
+        && is_valid_uuid(session_id)
+    {
+        return Some(session_id.to_string());
     }
 
     // 再尝试字符串格式：查找 "session_" 后面的内容
@@ -429,12 +428,14 @@ pub fn convert_request(
     let mut history = build_history(
         req,
         messages,
-        &model_id,
-        compression_config,
-        total_image_count,
-        is_agentic_model(&req.model),
-        &mut remaining_image_budget,
-        &mut tool_name_map,
+        BuildHistoryContext {
+            model_id: &model_id,
+            compression_config,
+            total_image_count,
+            is_agentic: is_agentic_model(&req.model),
+            remaining_image_budget: &mut remaining_image_budget,
+            tool_name_map: &mut tool_name_map,
+        },
     )?;
 
     // 8. 验证并过滤 tool_use/tool_result 配对
@@ -1048,18 +1049,30 @@ fn has_write_or_edit_tool(req: &MessagesRequest) -> bool {
         .is_some_and(|tools| tools.iter().any(|t| t.name == "Write" || t.name == "Edit"))
 }
 
+struct BuildHistoryContext<'a> {
+    model_id: &'a str,
+    compression_config: &'a CompressionConfig,
+    total_image_count: usize,
+    is_agentic: bool,
+    remaining_image_budget: &'a mut usize,
+    tool_name_map: &'a mut HashMap<String, String>,
+}
+
 /// 构建历史消息
 /// `messages` 参数是经过 prefill 预处理后的消息切片（末尾必为 user）
 fn build_history(
     req: &MessagesRequest,
     messages: &[super::types::Message],
-    model_id: &str,
-    compression_config: &CompressionConfig,
-    total_image_count: usize,
-    is_agentic: bool,
-    remaining_image_budget: &mut usize,
-    tool_name_map: &mut HashMap<String, String>,
+    ctx: BuildHistoryContext<'_>,
 ) -> Result<Vec<Message>, ConversionError> {
+    let BuildHistoryContext {
+        model_id,
+        compression_config,
+        total_image_count,
+        is_agentic,
+        remaining_image_budget,
+        tool_name_map,
+    } = ctx;
     let mut history = Vec::new();
 
     // 生成thinking前缀（如果需要）

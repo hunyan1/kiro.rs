@@ -303,8 +303,41 @@ async fn refresh_social_token(
     Ok(new_credentials)
 }
 
-/// IdC Token 刷新所需的 x-amz-user-agent header
-const IDC_AMZ_USER_AGENT: &str = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
+/// IdC Token 刷新所需的 x-amz-user-agent header 前缀
+const IDC_AMZ_USER_AGENT_PREFIX: &str = "aws-sdk-js/3.980.0";
+
+/// getUsageLimits API 所需的 x-amz-user-agent header 前缀
+const USAGE_LIMITS_AMZ_USER_AGENT_PREFIX: &str = "aws-sdk-js/1.0.0";
+
+fn build_idc_refresh_user_agents(config: &Config) -> (String, String) {
+    let os_name = &config.system_version;
+    let node_version = &config.node_version;
+
+    let x_amz_user_agent = format!("{} KiroIDE", IDC_AMZ_USER_AGENT_PREFIX);
+    let user_agent = format!(
+        "{} ua/2.1 os/{} lang/js md/nodejs#{} api/sso-oidc#3.980.0 m/E KiroIDE",
+        IDC_AMZ_USER_AGENT_PREFIX, os_name, node_version
+    );
+
+    (x_amz_user_agent, user_agent)
+}
+
+fn build_usage_limit_user_agents(config: &Config, machine_id: &str) -> (String, String) {
+    let kiro_version = &config.kiro_version;
+    let os_name = &config.system_version;
+    let node_version = &config.node_version;
+
+    let user_agent = format!(
+        "aws-sdk-js/1.0.0 ua/2.1 os/{} lang/js md/nodejs#{} api/codewhispererruntime#1.0.0 m/N,E KiroIDE-{}-{}",
+        os_name, node_version, kiro_version, machine_id
+    );
+    let amz_user_agent = format!(
+        "{} KiroIDE-{}-{}",
+        USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
+    );
+
+    (amz_user_agent, user_agent)
+}
 
 /// 刷新 IdC Token (AWS SSO OIDC)
 async fn refresh_idc_token(
@@ -324,13 +357,10 @@ async fn refresh_idc_token(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("IdC 刷新需要 clientSecret"))?;
 
-    // 优先使用凭据级 region，未配置或为空时回退到 config.region
-    let region = credentials
-        .region
-        .as_ref()
-        .filter(|r| !r.trim().is_empty())
-        .unwrap_or(&config.region);
+    // 优先级：凭据.auth_region > 凭据.region > config.auth_region > config.region
+    let region = credentials.effective_auth_region(config);
     let refresh_url = format!("https://oidc.{}.amazonaws.com/token", region);
+    let (x_amz_user_agent, user_agent) = build_idc_refresh_user_agents(config);
 
     let client = build_client(proxy, 60, config.tls_backend)?;
     let body = IdcRefreshRequest {
@@ -342,15 +372,13 @@ async fn refresh_idc_token(
 
     let response = client
         .post(&refresh_url)
-        .header("Content-Type", "application/json")
-        .header("Host", format!("oidc.{}.amazonaws.com", region))
-        .header("Connection", "keep-alive")
-        .header("x-amz-user-agent", IDC_AMZ_USER_AGENT)
-        .header("Accept", "*/*")
-        .header("Accept-Language", "*")
-        .header("sec-fetch-mode", "cors")
-        .header("User-Agent", "node")
-        .header("Accept-Encoding", "br, gzip, deflate")
+        .header("content-type", "application/json")
+        .header("x-amz-user-agent", &x_amz_user_agent)
+        .header("user-agent", &user_agent)
+        .header("host", format!("oidc.{}.amazonaws.com", region))
+        .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
+        .header("amz-sdk-request", "attempt=1; max=4")
+        .header("Connection", "close")
         .json(&body)
         .send()
         .await?;
@@ -392,9 +420,6 @@ async fn refresh_idc_token(
     Ok(new_credentials)
 }
 
-/// getUsageLimits API 所需的 x-amz-user-agent header 前缀
-const USAGE_LIMITS_AMZ_USER_AGENT_PREFIX: &str = "aws-sdk-js/1.0.0";
-
 /// 获取使用额度信息
 pub(crate) async fn get_usage_limits(
     credentials: &KiroCredentials,
@@ -409,7 +434,6 @@ pub(crate) async fn get_usage_limits(
     let host = format!("q.{}.amazonaws.com", region);
     let machine_id = machine_id::generate_from_credentials(credentials, config)
         .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
-    let kiro_version = &config.kiro_version;
 
     // 构建 URL
     let mut url = format!(
@@ -423,22 +447,14 @@ pub(crate) async fn get_usage_limits(
     }
 
     // 构建 User-Agent headers
-    let user_agent = format!(
-        "aws-sdk-js/1.0.0 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#22.21.1 \
-         api/codewhispererruntime#1.0.0 m/N,E KiroIDE-{}-{}",
-        kiro_version, machine_id
-    );
-    let amz_user_agent = format!(
-        "{} KiroIDE-{}-{}",
-        USAGE_LIMITS_AMZ_USER_AGENT_PREFIX, kiro_version, machine_id
-    );
+    let (amz_user_agent, user_agent) = build_usage_limit_user_agents(config, &machine_id);
 
     let client = build_client(proxy, 60, config.tls_backend)?;
 
     let response = client
         .get(&url)
         .header("x-amz-user-agent", &amz_user_agent)
-        .header("User-Agent", &user_agent)
+        .header("user-agent", &user_agent)
         .header("host", &host)
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
         .header("amz-sdk-request", "attempt=1; max=1")
@@ -3260,6 +3276,38 @@ mod tests {
         config: &'a Config,
     ) -> &'a str {
         credentials.region.as_ref().unwrap_or(&config.region)
+    }
+
+    #[test]
+    fn test_build_idc_refresh_user_agents_uses_config_versions() {
+        let mut config = Config::default();
+        config.system_version = "darwin#25.4.0".to_string();
+        config.node_version = "22.22.0".to_string();
+
+        let (amz_user_agent, user_agent) = build_idc_refresh_user_agents(&config);
+
+        assert_eq!(amz_user_agent, "aws-sdk-js/3.980.0 KiroIDE");
+        assert!(user_agent.contains("os/darwin#25.4.0"));
+        assert!(user_agent.contains("md/nodejs#22.22.0"));
+        assert!(user_agent.contains("api/sso-oidc#3.980.0"));
+    }
+
+    #[test]
+    fn test_build_usage_limit_user_agents_uses_config_versions() {
+        let mut config = Config::default();
+        config.kiro_version = "0.11.107".to_string();
+        config.system_version = "win32#10.0.22631".to_string();
+        config.node_version = "22.22.0".to_string();
+
+        let (amz_user_agent, user_agent) = build_usage_limit_user_agents(&config, "machine123");
+
+        assert_eq!(
+            amz_user_agent,
+            "aws-sdk-js/1.0.0 KiroIDE-0.11.107-machine123"
+        );
+        assert!(user_agent.contains("os/win32#10.0.22631"));
+        assert!(user_agent.contains("md/nodejs#22.22.0"));
+        assert!(user_agent.contains("KiroIDE-0.11.107-machine123"));
     }
 
     #[test]

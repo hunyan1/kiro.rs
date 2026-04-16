@@ -60,6 +60,16 @@ struct StreamRequestContext<'a> {
     user_id: Option<&'a str>,
 }
 
+struct NonStreamRequestContext<'a> {
+    request_body: &'a str,
+    model: &'a str,
+    input_tokens: i32,
+    tool_name_map: std::collections::HashMap<String, String>,
+    user_id: Option<&'a str>,
+    cache_tracker: Option<&'a std::sync::Arc<crate::anthropic::cache_tracker::CacheTracker>>,
+    cache_profile: Option<&'a crate::anthropic::cache_tracker::CacheProfile>,
+}
+
 fn build_cache_profile(
     cache_tracker: &crate::anthropic::cache_tracker::CacheTracker,
     payload: &MessagesRequest,
@@ -1021,17 +1031,16 @@ pub async fn post_messages(
         handle_stream_request(provider, stream_request).await
     } else {
         // 非流式响应
-        handle_non_stream_request(
-            provider,
-            &request_body,
-            &payload.model,
-            estimated_input_tokens,
+        let non_stream_request = NonStreamRequestContext {
+            request_body: &request_body,
+            model: &payload.model,
+            input_tokens: estimated_input_tokens,
             tool_name_map,
-            user_id.as_deref(),
-            Some(&state.cache_tracker),
-            Some(&cache_profile),
-        )
-        .await
+            user_id: user_id.as_deref(),
+            cache_tracker: Some(&state.cache_tracker),
+            cache_profile: Some(&cache_profile),
+        };
+        handle_non_stream_request(provider, non_stream_request).await
     }
 }
 async fn handle_stream_request(
@@ -1195,21 +1204,18 @@ fn create_sse_stream(
 /// 处理非流式请求
 async fn handle_non_stream_request(
     provider: std::sync::Arc<crate::kiro::provider::KiroProvider>,
-    request_body: &str,
-    model: &str,
-    input_tokens: i32,
-    tool_name_map: std::collections::HashMap<String, String>,
-    user_id: Option<&str>,
-    cache_tracker: Option<&std::sync::Arc<crate::anthropic::cache_tracker::CacheTracker>>,
-    cache_profile: Option<&crate::anthropic::cache_tracker::CacheProfile>,
+    context: NonStreamRequestContext<'_>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
-    let api_result = match provider.call_api(request_body, user_id).await {
+    let api_result = match provider
+        .call_api(context.request_body, context.user_id)
+        .await
+    {
         Ok(resp) => resp,
-        Err(e) => return map_kiro_provider_error_to_response(request_body, e),
+        Err(e) => return map_kiro_provider_error_to_response(context.request_body, e),
     };
 
-    let final_cache_context = match (cache_tracker, cache_profile) {
+    let final_cache_context = match (context.cache_tracker, context.cache_profile) {
         (Some(tracker), Some(profile)) => {
             let resolved = resolved_cache_usage(tracker, api_result.credential_id, profile);
             tracing::info!(
@@ -1308,14 +1314,14 @@ async fn handle_non_stream_request(
                                         tracing::warn!(
                                             tool_use_id = %tool_use.tool_use_id,
                                             buffer = %buffer,
-                                            request_body = %truncate_middle(request_body, 1200),
+                                            request_body = %truncate_middle(context.request_body, 1200),
                                             "工具输入 JSON 解析失败: {e}"
                                         );
                                         #[cfg(not(feature = "sensitive-logs"))]
                                         tracing::warn!(
                                             tool_use_id = %tool_use.tool_use_id,
                                             buffer_bytes = buffer.len(),
-                                            request_body_bytes = request_body.len(),
+                                            request_body_bytes = context.request_body.len(),
                                             "工具输入 JSON 解析失败: {e}"
                                         );
                                         serde_json::json!({})
@@ -1325,7 +1331,8 @@ async fn handle_non_stream_request(
                                 // 释放已完成的 buffer，避免请求处理期间内存重复占用
                                 tool_json_buffers.remove(&tool_use.tool_use_id);
 
-                                let original_name = tool_name_map
+                                let original_name = context
+                                    .tool_name_map
                                     .get(&tool_use.name)
                                     .cloned()
                                     .unwrap_or_else(|| tool_use.name.clone());
@@ -1341,7 +1348,7 @@ async fn handle_non_stream_request(
                         Event::ContextUsage(context_usage) => {
                             // 从上下文使用百分比计算实际的 input_tokens
                             let context_window =
-                                super::types::get_context_window_size(model) as f64;
+                                super::types::get_context_window_size(context.model) as f64;
                             let actual_input_tokens =
                                 (context_usage.context_usage_percentage * context_window / 100.0)
                                     as i32;
@@ -1405,7 +1412,7 @@ async fn handle_non_stream_request(
     let output_tokens = token::estimate_output_tokens(&content);
 
     // non-stream 与 stream 保持一致：始终使用本地估算的 input_tokens 作为最终口径。
-    let final_input_tokens = input_tokens;
+    let final_input_tokens = context.input_tokens;
     let billed_input_tokens = final_cache_context
         .map(|ctx| {
             billed_input_tokens(
@@ -1418,7 +1425,7 @@ async fn handle_non_stream_request(
 
     #[cfg(feature = "sensitive-logs")]
     tracing::info!(
-        estimated_input_tokens = input_tokens,
+        estimated_input_tokens = context.input_tokens,
         context_input_tokens = ?context_input_tokens_for_log,
         final_input_tokens,
         billed_input_tokens,
@@ -1447,7 +1454,7 @@ async fn handle_non_stream_request(
             "type": "message",
             "role": "assistant",
             "content": content,
-            "model": model,
+            "model": context.model,
             "stop_reason": stop_reason,
             "stop_sequence": null,
             "usage": usage
