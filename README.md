@@ -187,6 +187,8 @@ docker-compose up
 | `proxyPassword` | string | - | 代理密码 |
 | `adminApiKey` | string | - | Admin API 密钥，配置后启用凭据管理 API 和 Web 管理界面 |
 | `credentialRpm` | number | - | 单凭据目标 RPM（每分钟请求数），用于凭据级节流/分流；`0` 或未配置表示使用内置默认策略 |
+| `promptCacheTtlSeconds` | number | `300` | 本地 Prompt Cache TTL（秒） |
+| `promptCacheAccountingEnabled` | boolean | `true` | 是否启用本地 Prompt Cache usage 记账；关闭后不再输出或扣减 cache token |
 
 完整配置示例：
 
@@ -210,7 +212,9 @@ docker-compose up
    "proxyUsername": "user",
    "proxyPassword": "pass",
    "adminApiKey": "sk-admin-your-secret-key",
-   "credentialRpm": 5
+   "credentialRpm": 5,
+   "promptCacheTtlSeconds": 300,
+   "promptCacheAccountingEnabled": true
 }
 ```
 

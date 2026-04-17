@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v1.1.22] - 2026-04-17
 
 ### Changed
 - **429 限流改为凭据级冷却与自动分流** — Provider 现在会单独识别 429，解析并裁剪 `Retry-After`，将触发限流的凭据标记为 `RateLimitExceeded` 冷却；后续请求优先切换到其他可用凭据，无可切换时复用现有最短等待机制自动放慢转发速度，同时避免把 429 计入失败次数导致误禁号；补充了 `Retry-After`、默认冷却、切号、单号等待与亲和性绑定回切等回归测试 (`src/kiro/provider.rs`, `src/kiro/token_manager.rs`)
