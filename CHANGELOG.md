@@ -5,6 +5,7 @@
 ### Added
 - **全局配置页面支持编辑 defaultEndpoint** — Admin 全局配置 API 和前端弹窗新增 `defaultEndpoint` 字段，支持 ide/cli 选择并热更新到 KiroProvider 和 TokenManager 运行时，凭据未显式指定 endpoint 时生效；Dashboard 全局配置卡片同步展示当前默认值 (`src/admin/types.rs`, `src/admin/service.rs`, `src/kiro/provider.rs`, `src/kiro/token_manager.rs`, `admin-ui/src/types/api.ts`, `admin-ui/src/components/global-config-dialog.tsx`, `admin-ui/src/components/dashboard.tsx`)
 - **API/MCP 请求日志输出实际使用的 endpoint** — Provider 在发送请求（DEBUG）和请求成功（INFO）时记录 `endpoint=ide/cli`，便于排查凭据级与全局级 endpoint 路由 (`src/kiro/provider.rs`)
+- **补充 defaultEndpoint 热更新回归测试** — 为 `MultiTokenManager`、`KiroProvider` 与 Admin 全局配置更新流程新增测试，覆盖合法值保存、空值/未知值拒绝、trim 处理、运行时热更新与凭据级 endpoint 覆盖 (`src/admin/service.rs`, `src/kiro/provider.rs`, `src/kiro/token_manager.rs`)
 
 ## [v1.1.24] - 2026-04-22
 

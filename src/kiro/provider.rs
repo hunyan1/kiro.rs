@@ -1706,4 +1706,67 @@ mod tests {
             "test"
         );
     }
+
+    #[test]
+    fn test_update_default_endpoint() {
+        let mut config = Config::default();
+        config.default_endpoint = "ide".to_string();
+
+        let mut credentials = KiroCredentials::default();
+        credentials.endpoint = None; // 未显式指定，应使用默认值
+
+        let mut endpoints: HashMap<String, Arc<dyn KiroEndpoint>> = HashMap::new();
+        endpoints.insert("ide".to_string(), Arc::new(IdeEndpoint::new()));
+        endpoints.insert("cli".to_string(), Arc::new(CliEndpoint::new()));
+
+        let tm =
+            MultiTokenManager::new(config, vec![credentials.clone()], None, None, false).unwrap();
+        let provider =
+            KiroProvider::with_proxy(Arc::new(tm), None, endpoints.clone(), "ide".to_string());
+
+        // 初始状态：默认 ide
+        let endpoint = provider.endpoint_for(&credentials).unwrap();
+        assert_eq!(endpoint.name(), "ide");
+
+        // 热更新为 cli
+        provider.update_default_endpoint("cli".to_string()).unwrap();
+        let endpoint = provider.endpoint_for(&credentials).unwrap();
+        assert_eq!(endpoint.name(), "cli");
+
+        // 热更新回 ide
+        provider.update_default_endpoint("ide".to_string()).unwrap();
+        let endpoint = provider.endpoint_for(&credentials).unwrap();
+        assert_eq!(endpoint.name(), "ide");
+
+        // 尝试更新为未知 endpoint，应返回错误
+        let result = provider.update_default_endpoint("unknown".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("未知端点"));
+    }
+
+    #[test]
+    fn test_endpoint_for_respects_credential_override() {
+        let mut config = Config::default();
+        config.default_endpoint = "ide".to_string();
+
+        let mut credentials = KiroCredentials::default();
+        credentials.endpoint = Some("cli".to_string()); // 凭据显式指定 cli
+
+        let mut endpoints: HashMap<String, Arc<dyn KiroEndpoint>> = HashMap::new();
+        endpoints.insert("ide".to_string(), Arc::new(IdeEndpoint::new()));
+        endpoints.insert("cli".to_string(), Arc::new(CliEndpoint::new()));
+
+        let tm =
+            MultiTokenManager::new(config, vec![credentials.clone()], None, None, false).unwrap();
+        let provider = KiroProvider::with_proxy(Arc::new(tm), None, endpoints, "ide".to_string());
+
+        // 凭据显式指定 cli，应优先使用凭据配置
+        let endpoint = provider.endpoint_for(&credentials).unwrap();
+        assert_eq!(endpoint.name(), "cli");
+
+        // 即使热更新默认值为 ide，凭据显式配置仍生效
+        provider.update_default_endpoint("ide".to_string()).unwrap();
+        let endpoint = provider.endpoint_for(&credentials).unwrap();
+        assert_eq!(endpoint.name(), "cli");
+    }
 }

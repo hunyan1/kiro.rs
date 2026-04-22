@@ -982,3 +982,185 @@ impl AdminService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::anthropic::PromptCacheRuntime;
+    use crate::kiro::endpoint::{CliEndpoint, IdeEndpoint, KiroEndpoint};
+    use crate::kiro::model::credentials::KiroCredentials;
+    use crate::kiro::provider::KiroProvider;
+    use crate::kiro::token_manager::MultiTokenManager;
+    use crate::model::config::{CompressionConfig, Config};
+    use std::collections::HashSet;
+    use std::env;
+    use std::fs;
+
+    fn create_test_service() -> AdminService {
+        let config_path = env::temp_dir().join(format!(
+            "kiro-admin-service-test-{}-{}.json",
+            std::process::id(),
+            fastrand::u64(..)
+        ));
+
+        let config = Arc::new(RwLock::new(Config::load(&config_path).unwrap()));
+        let compression_config = Arc::new(RwLock::new(CompressionConfig::default()));
+        let prompt_cache_runtime = Arc::new(RwLock::new(PromptCacheRuntime::new(300, true)));
+
+        let credentials = KiroCredentials::default();
+        let tm = Arc::new(
+            MultiTokenManager::new(config.read().clone(), vec![credentials], None, None, false)
+                .unwrap(),
+        );
+
+        let known_endpoints: HashSet<String> = vec!["ide".to_string(), "cli".to_string()]
+            .into_iter()
+            .collect();
+
+        let mut endpoints: HashMap<String, Arc<dyn KiroEndpoint>> = HashMap::new();
+        endpoints.insert("ide".to_string(), Arc::new(IdeEndpoint::new()));
+        endpoints.insert("cli".to_string(), Arc::new(CliEndpoint::new()));
+        let provider = Arc::new(KiroProvider::with_proxy(
+            Arc::clone(&tm),
+            None,
+            endpoints,
+            "ide".to_string(),
+        ));
+
+        AdminService::new(
+            tm,
+            Some(provider),
+            config,
+            compression_config,
+            prompt_cache_runtime,
+            known_endpoints,
+        )
+    }
+
+    fn read_persisted_config(service: &AdminService) -> Config {
+        let config_path = service.config.read().config_path().unwrap().to_path_buf();
+        let content = fs::read_to_string(config_path).unwrap();
+        serde_json::from_str(&content).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config_default_endpoint_valid() {
+        let service = create_test_service();
+
+        let req = super::super::types::UpdateGlobalConfigRequest {
+            region: None,
+            credential_rpm: None,
+            prompt_cache_ttl_seconds: None,
+            prompt_cache_accounting_enabled: None,
+            default_endpoint: Some("cli".to_string()),
+            compression: None,
+        };
+
+        let result = service.update_global_config(req).await;
+        assert!(result.is_ok());
+
+        let config = service.get_global_config();
+        assert_eq!(config.default_endpoint, "cli");
+        assert_eq!(service.token_manager.config().default_endpoint, "cli");
+
+        let persisted = read_persisted_config(&service);
+        assert_eq!(persisted.default_endpoint, "cli");
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config_default_endpoint_empty_rejected() {
+        let service = create_test_service();
+
+        let req = super::super::types::UpdateGlobalConfigRequest {
+            region: None,
+            credential_rpm: None,
+            prompt_cache_ttl_seconds: None,
+            prompt_cache_accounting_enabled: None,
+            default_endpoint: Some("".to_string()),
+            compression: None,
+        };
+
+        let result = service.update_global_config(req).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("默认 endpoint 不能为空")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config_default_endpoint_whitespace_rejected() {
+        let service = create_test_service();
+
+        let req = super::super::types::UpdateGlobalConfigRequest {
+            region: None,
+            credential_rpm: None,
+            prompt_cache_ttl_seconds: None,
+            prompt_cache_accounting_enabled: None,
+            default_endpoint: Some("   ".to_string()),
+            compression: None,
+        };
+
+        let result = service.update_global_config(req).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("默认 endpoint 不能为空")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config_default_endpoint_unknown_rejected() {
+        let service = create_test_service();
+
+        let req = super::super::types::UpdateGlobalConfigRequest {
+            region: None,
+            credential_rpm: None,
+            prompt_cache_ttl_seconds: None,
+            prompt_cache_accounting_enabled: None,
+            default_endpoint: Some("unknown".to_string()),
+            compression: None,
+        };
+
+        let result = service.update_global_config(req).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("未知的 endpoint"));
+        assert!(err_msg.contains("unknown"));
+    }
+
+    #[tokio::test]
+    async fn test_update_global_config_default_endpoint_trimmed() {
+        let service = create_test_service();
+
+        let req = super::super::types::UpdateGlobalConfigRequest {
+            region: None,
+            credential_rpm: None,
+            prompt_cache_ttl_seconds: None,
+            prompt_cache_accounting_enabled: None,
+            default_endpoint: Some("  cli  ".to_string()),
+            compression: None,
+        };
+
+        let result = service.update_global_config(req).await;
+        assert!(result.is_ok());
+
+        let config = service.get_global_config();
+        assert_eq!(config.default_endpoint, "cli");
+        assert_eq!(service.token_manager.config().default_endpoint, "cli");
+
+        let persisted = read_persisted_config(&service);
+        assert_eq!(persisted.default_endpoint, "cli");
+    }
+
+    #[test]
+    fn test_get_global_config_includes_default_endpoint() {
+        let service = create_test_service();
+        let config = service.get_global_config();
+        assert_eq!(config.default_endpoint, "ide"); // Config::default() 的默认值
+    }
+}
