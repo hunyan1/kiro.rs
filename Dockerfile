@@ -1,51 +1,20 @@
-FROM rust:1.93-alpine AS chef
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static
-RUN cargo install cargo-chef
-WORKDIR /app
-
-FROM chef AS planner
-COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM node:24-alpine AS frontend-builder
-WORKDIR /app/admin-ui
-COPY admin-ui/package.json ./
-# pnpm 10.x 会把 ignored build scripts 当作错误（ERR_PNPM_IGNORED_BUILDS）。
-# @swc/core 的平台专用二进制通过 optional dependencies 提供，
-# 不依赖 postinstall 脚本，--ignore-scripts 在容器构建中安全且更快。
-RUN npm install -g pnpm && pnpm install --ignore-scripts
-COPY admin-ui ./
-RUN pnpm build
-
-FROM chef AS builder
-
-# 可选：启用敏感日志输出（仅用于排障）
-ARG ENABLE_SENSITIVE_LOGS=false
-
-COPY --from=planner /app/recipe.json recipe.json
-RUN if [ "$ENABLE_SENSITIVE_LOGS" = "true" ]; then \
-        cargo chef cook --release --features sensitive-logs --recipe-path recipe.json; \
-    else \
-        cargo chef cook --release --recipe-path recipe.json; \
-    fi
-
-COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
-COPY --from=frontend-builder /app/admin-ui/dist /app/admin-ui/dist
-
-RUN if [ "$ENABLE_SENSITIVE_LOGS" = "true" ]; then \
-        cargo build --release --features sensitive-logs; \
-    else \
-        cargo build --release; \
-    fi
+# 该 Dockerfile 接受 GitHub Actions 预编译的静态 musl 二进制 + 已构建的前端产物。
+# 不在镜像里跑 cargo / pnpm，构建超快、镜像超小。
+#
+# 构建时通过 buildx --platform 自动注入 TARGETARCH（amd64 / arm64），
+# 对应 artifacts/kiro-rs-linux-{amd64,arm64} 这两个二进制文件。
 
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
-COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
+
+ARG TARGETARCH
+COPY artifacts/kiro-rs-linux-${TARGETARCH} /app/kiro-rs
+COPY admin-ui/dist /app/admin-ui/dist
+
+RUN chmod +x /app/kiro-rs
 
 VOLUME ["/app/config"]
 

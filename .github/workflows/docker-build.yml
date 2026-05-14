@@ -19,19 +19,125 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GHCR_REGISTRY: ghcr.io
-  GHCR_IMAGE: ${{ github.repository }}
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  DOCKERHUB_IMAGE: docker.io/hunyan/kiro.rs
 
 jobs:
-  build_docker_image:
+  # ========= Job 1：前端构建（一次） =========
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: admin-ui/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: admin-ui
+        run: pnpm install --ignore-scripts --frozen-lockfile
+
+      - name: Build
+        working-directory: admin-ui
+        run: pnpm build
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-ui-dist
+          path: admin-ui/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  # ========= Job 2：Rust 交叉编译（amd64 + arm64 矩阵） =========
+  build-rust:
+    name: Build Rust ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: amd64
+          - target: aarch64-unknown-linux-musl
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install zigbuild deps
+        run: |
+          pip3 install --break-system-packages cargo-zigbuild
+          # zig 由 cargo-zigbuild 自动安装；这里 pip 安装的是 wrapper
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'release' || 'release-fast' }}
+          shared-key: docker-build
+          cache-on-failure: true
+
+      # 准备前端 dist：rust-embed 需要在编译期把它打进二进制
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: admin-ui-dist
+          path: admin-ui/dist
+
+      - name: Build (release-fast for branches, release for tags)
+        env:
+          PROFILE: ${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'release-fast' }}
+        run: |
+          set -euo pipefail
+          if [ "$PROFILE" = "release" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }}
+          else
+            cargo zigbuild --profile release-fast --target ${{ matrix.target }}
+          fi
+          # zigbuild 输出路径同 cargo
+          if [ "$PROFILE" = "release" ]; then
+            cp target/${{ matrix.target }}/release/kiro-rs kiro-rs-linux-${{ matrix.arch }}
+          else
+            cp target/${{ matrix.target }}/release-fast/kiro-rs kiro-rs-linux-${{ matrix.arch }}
+          fi
+          ls -lh kiro-rs-linux-${{ matrix.arch }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiro-rs-linux-${{ matrix.arch }}
+          path: kiro-rs-linux-${{ matrix.arch }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # ========= Job 3：组装 Docker 镜像并推送 =========
+  publish-docker:
     name: Build & Push Docker Image
+    needs: [build-frontend, build-rust]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -42,16 +148,56 @@ jobs:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.GHCR_REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check Docker Hub secrets
+        id: hub_check
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub_check.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 下载预编译产物
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: admin-ui-dist
+          path: admin-ui/dist
+
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kiro-rs-linux-amd64
+          path: artifacts
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: kiro-rs-linux-arm64
+          path: artifacts
+
+      - name: Make binaries executable
+        run: chmod +x artifacts/kiro-rs-linux-*
+
+      # tag 自动推断
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
+            ${{ env.GHCR_IMAGE }}
+            ${{ steps.hub_check.outputs.enabled == 'true' && env.DOCKERHUB_IMAGE || '' }}
           flavor: |
             latest=false
           tags: |
@@ -61,7 +207,7 @@ jobs:
             type=sha,prefix=sha-,enable=true
             type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -72,3 +218,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 同步 README 到 Docker Hub 仓库（Overview 与 Short description）
+      # 只在 master/main 分支或打 tag 时同步，避免临时分支构建覆盖描述
+      - name: Sync README to Docker Hub
+        if: |
+          steps.hub_check.outputs.enabled == 'true' &&
+          (
+            startsWith(github.ref, 'refs/tags/') ||
+            github.ref == 'refs/heads/main' ||
+            github.ref == 'refs/heads/master'
+          )
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: hunyan/kiro.rs
+          short-description: "Anthropic Claude API 兼容代理（基于 Kiro），多平台镜像 / GHCR 同步发布"
+          readme-filepath: ./README.md
+
+      - name: Summary
+        run: |
+          echo "### Docker Images Pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

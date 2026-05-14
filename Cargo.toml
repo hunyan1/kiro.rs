@@ -7,6 +7,15 @@ edition = "2024"
 lto = "thin"
 strip = true
 
+# 测试用快速 release：放弃 LTO/strip 换编译速度
+# 用法：cargo build --profile release-fast
+# CI 在分支 push 时使用此 profile，打 tag 时用原 release profile
+[profile.release-fast]
+inherits = "release"
+lto = false
+strip = false
+codegen-units = 16
+
 [features]
 default = []
 # 显式启用才允许打印潜在敏感信息（仅用于排障）

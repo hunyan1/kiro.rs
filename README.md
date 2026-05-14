@@ -2,6 +2,11 @@
 
 一个用 Rust 编写的 Anthropic Claude API 兼容代理服务，将 Anthropic API 请求转换为 Kiro API 请求。
 
+[![Docker Hub](https://img.shields.io/docker/pulls/hunyan/kiro.rs?logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/hunyan/kiro.rs)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Fhunyan1%2Fkiro.rs-2088FF?logo=github)](https://github.com/hunyan1/kiro.rs/pkgs/container/kiro.rs)
+
+> 仓库继承关系：[hank9999/kiro.rs](https://github.com/hank9999/kiro.rs)（原作者）→ [BenedictKing/kiro.rs](https://github.com/BenedictKing/kiro.rs)（二改）→ 当前仓库（在二改基础上的修改）。
+
 ---
 
 ## 免责声明
@@ -154,13 +159,58 @@ curl http://127.0.0.1:8990/v1/messages \
 
 ### Docker
 
-也可以通过 Docker 启动：
+镜像同步发布到 Docker Hub 和 GHCR：
+
+| Registry | 镜像地址 |
+|---|---|
+| Docker Hub | `hunyan/kiro.rs` |
+| GHCR | `ghcr.io/hunyan1/kiro.rs` |
+| GHCR 国内镜像 | `ghcr.nju.edu.cn/hunyan1/kiro.rs` |
+
+可用 tag：
+
+| Tag | 说明 |
+|---|---|
+| `latest` | 最新稳定版本（仅在打非预发布 tag 时更新） |
+| `vX.Y.Z` | 具体版本号 |
+| `dev` | master 分支最新提交 |
+| `sha-<short>` | 任意一次提交的快照 |
+
+#### 用 docker-compose 启动（推荐）
 
 ```bash
-docker-compose up
+mkdir -p config
+cp config.example.json config/config.json
+cp credentials.example.idc.json config/credentials.json   # 按需选 social/multiple/idc 模板
+# 编辑 config/config.json 与 config/credentials.json，至少填好 apiKey、credentials 等
+
+docker-compose up -d
 ```
 
-需要将 `config.json` 和 `credentials.json` 挂载到容器中，具体参见 `docker-compose.yml`。
+仓库自带的 `docker-compose.yml` 默认拉 `hunyan/kiro.rs:latest`。如果想指定版本：
+
+```bash
+IMAGE_TAG=v1.1.30 docker-compose up -d
+```
+
+#### 用 docker run 启动
+
+```bash
+docker run -d \
+  --name kiro-rs \
+  -p 8990:8990 \
+  -v $(pwd)/config:/app/config \
+  --restart unless-stopped \
+  hunyan/kiro.rs:latest
+```
+
+#### 从源码构建（可选）
+
+仓库根目录附带 `Dockerfile.from-source`，不依赖 GitHub Actions 预编译产物：
+
+```bash
+docker build -f Dockerfile.from-source -t kiro-rs:local .
+```
 
 ## 配置详解
 
