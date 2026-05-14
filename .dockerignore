@@ -2,9 +2,9 @@
 target/
 Cargo.lock
 
-# Node.js dependencies and build artifacts
+# Node.js dependencies / 中间产物
+# 注意：admin-ui/dist 不能 ignore，新 Dockerfile 需要直接 COPY 进去
 admin-ui/node_modules/
-admin-ui/dist/
 admin-ui/pnpm-lock.yaml
 admin-ui/tsconfig.tsbuildinfo
 admin-ui/.vite/
@@ -22,6 +22,7 @@ admin-ui/.vite/
 
 # Claude/AI
 .claude/
+.kiro/
 CLAUDE.md
 AGENTS.md
 
@@ -51,7 +52,8 @@ Thumbs.db
 config.json
 credentials.json
 
-# Docker files
+# Docker files（自身不进 build context）
 Dockerfile
+Dockerfile.from-source
 .dockerignore
 docker-compose*.yml
