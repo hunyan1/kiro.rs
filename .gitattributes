@@ -1,0 +1,9 @@
+# 默认按 git 的 core.autocrlf 处理
+* text=auto
+
+# Shell 脚本必须 LF（Windows 下也提交 LF），否则在 Linux runner 上会报语法错
+*.sh text eol=lf
+
+# 工作流也建议 LF（避免某些场景下解析问题）
+*.yml text eol=lf
+*.yaml text eol=lf
