@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v1.1.31] - 2026-05-14
 
 ### Added
 - **/v1/models 改为实时拉取上游模型列表（带 5 分钟缓存）** — 新增 `KiroProvider::list_available_models()`，在请求 `/v1/models` 时调用上游 `q.{region}.amazonaws.com/ListAvailableModels` 实时获取模型；上游不可达或返回空时回退到内置静态列表，保留旧客户端的模型 ID 兼容性 (`src/kiro/models.rs`, `src/kiro/provider.rs`, `src/anthropic/handlers.rs`)
@@ -9,8 +9,9 @@
 - **余额展示支持负数** — admin API 与 admin UI 不再将 `remaining` 截到 0，超额时显示真实负值，红色提示"已超额 N" (`src/admin/service.rs`, `src/kiro/token_manager.rs`, `admin-ui/src/components/credential-card.tsx`, `admin-ui/src/components/balance-dialog.tsx`)
 
 ### Changed
-- **Docker 构建工作流** — 默认推送至 GHCR（`ghcr.io/<owner>/<repo>`，使用 `GITHUB_TOKEN`），阿里云仓库改为可选（缺 secret 时自动跳过）；新增 `workflow_dispatch` 手动触发与 `main`/`master` 分支推送时自动构建 `:dev` 镜像 (`.github/workflows/docker-build.yml`)
-- **docker-compose.yml** — 镜像默认指向 GHCR 当前仓库，`IMAGE_OWNER` 改为必填变量
+- **Docker 构建工作流** — 改为四 job 流水线（前端、Rust amd64、Rust arm64、Docker 组装），用预编译产物 + 静态 musl 二进制构建薄镜像，构建时间从 1+ 小时降到 12-18 分钟；同时推送到 GHCR 和 Docker Hub，自动同步 README 到 Docker Hub Overview (`.github/workflows/docker-build.yml`, `Dockerfile`, `Dockerfile.from-source`, `Cargo.toml`)
+- **Release 工作流** — `draft: false` + `make_latest: true`，打 tag 后自动发布到 GitHub Releases，三平台（Linux/macOS/Windows）二进制聚合到同一条 release (`.github/workflows/release-*.yml`)
+- **docker-compose.yml** — 镜像默认指向 Docker Hub `hunyan/kiro.rs`，附带 GHCR 与 GHCR 国内镜像备选
 
 ## [v1.1.30] - 2026-05-08
 
