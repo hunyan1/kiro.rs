@@ -21,6 +21,7 @@ use crate::kiro::endpoint::{
 };
 use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
+use crate::kiro::models::{self, KiroModelInfo, ModelsCache};
 use crate::kiro::token_manager::{CallContext, MultiTokenManager};
 
 /// API 调用结果
@@ -63,6 +64,8 @@ pub struct KiroProvider {
     endpoints: HashMap<String, Arc<dyn KiroEndpoint>>,
     /// 默认端点名称
     default_endpoint: RwLock<String>,
+    /// 上游可用模型列表缓存（GET /v1/models 用）
+    models_cache: Arc<ModelsCache>,
 }
 
 impl KiroProvider {
@@ -109,6 +112,7 @@ impl KiroProvider {
             client_cache: Mutex::new(HashMap::new()),
             endpoints,
             default_endpoint: RwLock::new(default_endpoint),
+            models_cache: Arc::new(ModelsCache::default()),
         }
     }
 
@@ -1119,6 +1123,31 @@ impl KiroProvider {
             omitted,
             &s[tail_start..]
         ))
+    }
+
+    /// 拉取上游可用模型列表（带 5 分钟缓存）
+    ///
+    /// 步骤：
+    /// 1. 通过 token_manager 取一个可用凭据（自动刷 token）
+    /// 2. 复用对应 endpoint 的 host / UA / profileArn 注入逻辑
+    /// 3. 命中缓存时直接返回；上游失败时回退到旧缓存（若有）
+    pub async fn list_available_models(&self) -> anyhow::Result<Vec<KiroModelInfo>> {
+        if let Some(models) = self.models_cache.get_fresh() {
+            return Ok(models);
+        }
+
+        let ctx = self.token_manager.acquire_context().await?;
+        let endpoint = self.endpoint_for(&ctx.credentials)?;
+        let client = self.get_client_for_credential(&ctx);
+
+        models::fetch_with_cache(
+            &client,
+            &self.token_manager,
+            endpoint.as_ref(),
+            &ctx,
+            &self.models_cache,
+        )
+        .await
     }
 }
 

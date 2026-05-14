@@ -617,6 +617,8 @@ pub struct CredentialEntrySnapshot {
     pub api_region: Option<String>,
     /// 最终生效的 endpoint 名称
     pub endpoint: Option<String>,
+    /// 凭据级"允许超额使用"开关（None 表示按全局配置）
+    pub allow_overages: Option<bool>,
 }
 
 /// 凭据管理器状态快照
@@ -2326,18 +2328,38 @@ impl MultiTokenManager {
                     // 计算剩余额度
                     let used = limits.current_usage();
                     let limit = limits.usage_limit();
-                    let remaining = (limit - used).max(0.0);
+                    // 允许显示负数：超额使用时 remaining < 0，前端可据此提示已超额
+                    let remaining = limit - used;
 
                     self.update_balance_cache(id, remaining);
 
-                    // 余额小于 1 时自动禁用凭据
-                    if remaining < 1.0 {
+                    // 余额不足时是否自动禁用：凭据级 allowOverages 优先，回退到全局开关
+                    let global_disable = self.config.read().disable_on_insufficient_balance;
+                    let allow_overages = {
+                        let entries = self.entries.lock();
+                        entries
+                            .iter()
+                            .find(|e| e.id == id)
+                            .and_then(|e| e.credentials.allow_overages)
+                    };
+                    let should_disable_low_balance = match allow_overages {
+                        Some(true) => false,
+                        Some(false) => true,
+                        None => global_disable,
+                    };
+                    if remaining < 1.0 && should_disable_low_balance {
                         let mut entries = self.entries.lock();
                         if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
                             entry.disabled = true;
                             entry.disable_reason = Some(DisableReason::InsufficientBalance);
                             tracing::warn!("凭据 #{} 余额不足 ({:.2})，已自动禁用", id, remaining);
                         }
+                    } else if remaining < 1.0 {
+                        tracing::info!(
+                            "凭据 #{} 余额为 {:.2}，但已配置允许超额，不自动禁用",
+                            id,
+                            remaining
+                        );
                     } else {
                         tracing::info!("凭据 #{} 余额初始化成功: {:.2}", id, remaining);
                     }
@@ -2407,6 +2429,7 @@ impl MultiTokenManager {
                         region: e.credentials.region.clone(),
                         api_region: e.credentials.api_region.clone(),
                         endpoint: e.credentials.endpoint.clone(),
+                        allow_overages: e.credentials.allow_overages,
                     }
                 })
                 .collect(),
@@ -2483,6 +2506,34 @@ impl MultiTokenManager {
                 .find(|e| e.id == id)
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
             entry.credentials.endpoint = endpoint;
+        }
+        self.persist_credentials()?;
+        Ok(())
+    }
+
+    /// 设置凭据级"允许超额使用"开关（Admin API）
+    ///
+    /// `Some(true)` 表示该凭据已开启 Overages，余额耗尽后也不会被自动禁用；
+    /// `Some(false)` 表示强制按余额禁用；`None` 表示回退到全局配置。
+    pub fn set_allow_overages(&self, id: u64, allow: Option<bool>) -> anyhow::Result<()> {
+        {
+            let mut entries = self.entries.lock();
+            let entry = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            entry.credentials.allow_overages = allow;
+
+            // 如果切换到允许超额，且当前是因为余额不足被禁用的，顺带恢复
+            if matches!(allow, Some(true) | None)
+                && entry.disabled
+                && entry.disable_reason == Some(DisableReason::InsufficientBalance)
+            {
+                entry.disabled = false;
+                entry.disable_reason = None;
+                entry.failure_count = 0;
+                entry.auto_heal_reason = None;
+            }
         }
         self.persist_credentials()?;
         Ok(())

@@ -1,8 +1,9 @@
 services:
   kiro-rs:
-    # 使用国内镜像
-    # image: ghcr.nju.edu.cn/${IMAGE_OWNER:-hank9999}/kiro-rs:${IMAGE_TAG:-latest}
-    image: ghcr.io/${IMAGE_OWNER:-hank9999}/kiro-rs:${IMAGE_TAG:-latest}
+    # 默认拉取 GHCR 镜像（IMAGE_OWNER 必填，建议设为你的 GitHub 账号或组织名）
+    # 国内拉不到 ghcr.io 时可改成 ghcr.nju.edu.cn 等镜像
+    # image: ghcr.nju.edu.cn/${IMAGE_OWNER:?set IMAGE_OWNER to your GitHub user/org}/kiro.rs:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_OWNER:?set IMAGE_OWNER to your GitHub user/org}/kiro.rs:${IMAGE_TAG:-latest}
     container_name: kiro-rs
     extra_hosts:
       - "host.docker.internal:host-gateway"

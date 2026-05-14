@@ -112,6 +112,7 @@ impl AdminService {
                     api_region: entry.api_region,
                     endpoint,
                     effective_endpoint,
+                    allow_overages: entry.allow_overages,
                 }
             })
             .collect();
@@ -130,6 +131,17 @@ impl AdminService {
     pub fn set_disabled(&self, id: u64, disabled: bool) -> Result<(), AdminServiceError> {
         self.token_manager
             .set_disabled(id, disabled)
+            .map_err(|e| self.classify_error(e, id))
+    }
+
+    /// 设置凭据级"允许超额使用"开关
+    pub fn set_allow_overages(
+        &self,
+        id: u64,
+        allow: Option<bool>,
+    ) -> Result<(), AdminServiceError> {
+        self.token_manager
+            .set_allow_overages(id, allow)
             .map_err(|e| self.classify_error(e, id))
     }
 
@@ -239,7 +251,8 @@ impl AdminService {
 
         let current_usage = usage.current_usage();
         let usage_limit = usage.usage_limit();
-        let remaining = (usage_limit - current_usage).max(0.0);
+        // 允许显示负数：超额使用时 remaining < 0
+        let remaining = usage_limit - current_usage;
         let usage_percentage = if usage_limit > 0.0 {
             (current_usage / usage_limit * 100.0).min(100.0)
         } else {
@@ -354,6 +367,7 @@ impl AdminService {
             proxy_url: req.proxy_url,
             proxy_username: req.proxy_username,
             proxy_password: req.proxy_password,
+            allow_overages: req.allow_overages,
             disabled: false, // 新添加的凭据默认启用
             runtime_only: false,
         };
@@ -677,6 +691,7 @@ impl AdminService {
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
+            allow_overages: None,
             disabled: false,
             runtime_only: false,
         };

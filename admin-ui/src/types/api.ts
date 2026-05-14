@@ -45,6 +45,13 @@ export interface CredentialStatusItem {
   endpoint?: string | null
   /** 最终生效的 endpoint */
   effectiveEndpoint: string
+  /**
+   * 凭据级"允许超额使用"开关：
+   * - `true`：该凭据已开启 Overages，余额耗尽后也不会被自动禁用
+   * - `false`：强制按余额禁用
+   * - `null`/`undefined`：按全局配置 disableOnInsufficientBalance 决定
+   */
+  allowOverages?: boolean | null
 }
 
 // 余额响应

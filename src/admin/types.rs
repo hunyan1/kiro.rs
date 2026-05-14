@@ -56,6 +56,8 @@ pub struct CredentialStatusItem {
     pub endpoint: Option<String>,
     /// 最终生效的 endpoint 名称
     pub effective_endpoint: String,
+    /// 凭据级"允许超额使用"开关（None 表示按全局配置）
+    pub allow_overages: Option<bool>,
 }
 
 // ============ 操作请求 ============
@@ -66,6 +68,16 @@ pub struct CredentialStatusItem {
 pub struct SetDisabledRequest {
     /// 是否禁用
     pub disabled: bool,
+}
+
+/// 设置凭据级"允许超额使用"开关
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAllowOveragesRequest {
+    /// `Some(true)` 表示开启 Overages（不因低余额自动禁用）；
+    /// `Some(false)` 表示强制按余额禁用；
+    /// `None` 表示回退到全局配置 `disableOnInsufficientBalance`。
+    pub allow_overages: Option<bool>,
 }
 
 /// 修改优先级请求
@@ -143,6 +155,12 @@ pub struct AddCredentialRequest {
 
     /// 凭据级代理密码
     pub proxy_password: Option<String>,
+
+    /// 凭据级"允许超额使用"开关（可选）
+    /// `Some(true)` 表示该凭据已开启 Overages，余额耗尽后也不会被自动禁用
+    /// `None` 表示按全局配置走
+    #[serde(default)]
+    pub allow_overages: Option<bool>,
 }
 
 fn default_auth_method() -> String {

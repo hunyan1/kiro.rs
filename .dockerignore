@@ -34,6 +34,9 @@ README.md
 config.example.json
 credentials.example.*.json
 
+# 参考项目（不进镜像）
+Kiro-account-manager/
+
 # Development and test files
 src/test.rs
 src/debug.rs

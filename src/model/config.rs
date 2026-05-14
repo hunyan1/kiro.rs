@@ -98,6 +98,14 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub prompt_cache_accounting_enabled: bool,
 
+    /// 余额不足时是否自动禁用凭据（默认 true，兼容原行为）
+    ///
+    /// 设为 false 时，即使上游返回的剩余额度小于 1（例如 KIRO PRO 已用尽月度额度），
+    /// 也不会在启动初始化阶段自动禁用凭据。适合开启了 Overages（允许超额使用）
+    /// 的账号场景，让额度耗尽后仍可继续走超额计费。
+    #[serde(default = "default_true")]
+    pub disable_on_insufficient_balance: bool,
+
     /// 默认端点名称（凭据未显式指定 endpoint 时使用）
     #[serde(default = "default_endpoint")]
     pub default_endpoint: String,
@@ -306,6 +314,7 @@ impl Default for Config {
             compression: CompressionConfig::default(),
             prompt_cache_ttl_seconds: default_prompt_cache_ttl_seconds(),
             prompt_cache_accounting_enabled: default_true(),
+            disable_on_insufficient_balance: default_true(),
             default_endpoint: default_endpoint(),
             config_path: None,
         }

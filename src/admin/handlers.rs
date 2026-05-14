@@ -9,8 +9,9 @@ use axum::{
 use super::{
     middleware::AdminState,
     types::{
-        AddCredentialRequest, ImportTokenJsonRequest, SetDisabledRequest, SetEndpointRequest,
-        SetPriorityRequest, SetRegionRequest, SuccessResponse, UpdateProxyConfigRequest,
+        AddCredentialRequest, ImportTokenJsonRequest, SetAllowOveragesRequest, SetDisabledRequest,
+        SetEndpointRequest, SetPriorityRequest, SetRegionRequest, SuccessResponse,
+        UpdateProxyConfigRequest,
     },
 };
 
@@ -32,6 +33,26 @@ pub async fn set_credential_disabled(
         Ok(_) => {
             let action = if payload.disabled { "禁用" } else { "启用" };
             Json(SuccessResponse::new(format!("凭据 #{} 已{}", id, action))).into_response()
+        }
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/credentials/:id/allow-overages
+/// 设置凭据级"允许超额使用"开关
+pub async fn set_credential_allow_overages(
+    State(state): State<AdminState>,
+    Path(id): Path<u64>,
+    Json(payload): Json<SetAllowOveragesRequest>,
+) -> impl IntoResponse {
+    match state.service.set_allow_overages(id, payload.allow_overages) {
+        Ok(_) => {
+            let desc = match payload.allow_overages {
+                Some(true) => "已开启超额使用",
+                Some(false) => "已关闭超额使用",
+                None => "已恢复为全局默认",
+            };
+            Json(SuccessResponse::new(format!("凭据 #{} {}", id, desc))).into_response()
         }
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }

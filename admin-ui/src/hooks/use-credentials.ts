@@ -4,6 +4,7 @@ import {
   getCredentials,
   deleteCredential,
   setCredentialDisabled,
+  setCredentialAllowOverages,
   setCredentialPriority,
   setCredentialRegion,
   setCredentialEndpoint,
@@ -97,6 +98,19 @@ export function useSetDisabled() {
       setCredentialDisabled(id, disabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+// 设置凭据级允许超额使用
+export function useSetAllowOverages() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, allowOverages }: { id: number; allowOverages: boolean | null }) =>
+      setCredentialAllowOverages(id, allowOverages),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['cached-balances'] })
     },
   })
 }

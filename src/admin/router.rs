@@ -9,8 +9,9 @@ use super::{
     handlers::{
         add_credential, delete_credential, force_refresh_token, get_all_credentials,
         get_cached_balances, get_credential_balance, get_global_config, get_proxy_config,
-        import_token_json, reset_failure_count, set_credential_disabled, set_credential_endpoint,
-        set_credential_priority, set_credential_region, update_global_config, update_proxy_config,
+        import_token_json, reset_failure_count, set_credential_allow_overages,
+        set_credential_disabled, set_credential_endpoint, set_credential_priority,
+        set_credential_region, update_global_config, update_proxy_config,
     },
     middleware::{AdminState, admin_auth_middleware},
 };
@@ -42,6 +43,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/credentials/import-token-json", post(import_token_json))
         .route("/credentials/{id}", delete(delete_credential))
         .route("/credentials/{id}/disabled", post(set_credential_disabled))
+        .route(
+            "/credentials/{id}/allow-overages",
+            post(set_credential_allow_overages),
+        )
         .route("/credentials/{id}/priority", post(set_credential_priority))
         .route("/credentials/{id}/region", post(set_credential_region))
         .route("/credentials/{id}/endpoint", post(set_credential_endpoint))

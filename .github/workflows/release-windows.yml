@@ -70,7 +70,8 @@ jobs:
           files: |
             kiro-rs-windows-amd64.exe
             kiro-rs-windows-arm64.exe
-          draft: true
+          draft: false
+          make_latest: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

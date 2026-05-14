@@ -18,6 +18,7 @@ import {
 import type { CredentialStatusItem, CachedBalanceInfo, BalanceResponse } from '@/types/api'
 import {
   useSetDisabled,
+  useSetAllowOverages,
   useSetPriority,
   useSetRegion,
   useSetEndpoint,
@@ -71,6 +72,7 @@ export function CredentialCard({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   const setDisabled = useSetDisabled()
+  const setAllowOverages = useSetAllowOverages()
   const setPriority = useSetPriority()
   const setRegion = useSetRegion()
   const setEndpoint = useSetEndpoint()
@@ -88,6 +90,16 @@ export function CredentialCard({
         onError: (err) => {
           toast.error('操作失败: ' + (err as Error).message)
         },
+      }
+    )
+  }
+
+  const handleToggleAllowOverages = (next: boolean) => {
+    setAllowOverages.mutate(
+      { id: credential.id, allowOverages: next ? true : null },
+      {
+        onSuccess: (res) => toast.success(res.message),
+        onError: (err) => toast.error('操作失败: ' + (err as Error).message),
       }
     )
   }
@@ -325,22 +337,26 @@ export function CredentialCard({
                   <Loader2 className="inline w-3 h-3 animate-spin" /> 加载中...
                 </span>
               ) : balance ? (
-                <span className="font-medium ml-1">
+                <span className={`font-medium ml-1 ${balance.remaining < 0 ? 'text-red-500' : ''}`}>
                   {balance.remaining.toFixed(2)} / {balance.usageLimit.toFixed(2)}
                   <span className="text-xs text-muted-foreground ml-1">
-                    ({(100 - balance.usagePercentage).toFixed(1)}% 剩余)
+                    {balance.remaining < 0
+                      ? `(已超额 ${Math.abs(balance.remaining).toFixed(2)})`
+                      : `(${(100 - balance.usagePercentage).toFixed(1)}% 剩余)`}
                   </span>
                 </span>
               ) : cachedBalance && cachedBalance.ttlSecs > 0 && cachedBalance.usageLimit > 0 ? (
-                <span className="font-medium ml-1">
+                <span className={`font-medium ml-1 ${cachedBalance.remaining < 0 ? 'text-red-500' : ''}`}>
                   {cachedBalance.remaining.toFixed(2)} / {cachedBalance.usageLimit.toFixed(2)}
                   <span className="text-xs text-muted-foreground ml-1">
-                    ({(100 - cachedBalance.usagePercentage).toFixed(1)}% 剩余, {formatCacheAge(cachedBalance.cachedAt)}缓存)
+                    {cachedBalance.remaining < 0
+                      ? `(已超额 ${Math.abs(cachedBalance.remaining).toFixed(2)}, ${formatCacheAge(cachedBalance.cachedAt)}缓存)`
+                      : `(${(100 - cachedBalance.usagePercentage).toFixed(1)}% 剩余, ${formatCacheAge(cachedBalance.cachedAt)}缓存)`}
                   </span>
                 </span>
               ) : cachedBalance && cachedBalance.ttlSecs > 0 ? (
-                <span className="font-medium ml-1">
-                  ${cachedBalance.remaining.toFixed(2)}
+                <span className={`font-medium ml-1 ${cachedBalance.remaining < 0 ? 'text-red-500' : ''}`}>
+                  {cachedBalance.remaining.toFixed(2)}
                   <span className="text-xs text-muted-foreground ml-1">
                     ({formatCacheAge(cachedBalance.cachedAt)}缓存)
                   </span>
@@ -348,6 +364,21 @@ export function CredentialCard({
               ) : (
                 <span className="text-sm text-muted-foreground ml-1">未知</span>
               )}
+            </div>
+            <div className="col-span-2 flex items-center gap-2">
+              <span className="text-muted-foreground">允许超额使用：</span>
+              <Switch
+                checked={credential.allowOverages === true}
+                onCheckedChange={handleToggleAllowOverages}
+                disabled={setAllowOverages.isPending}
+              />
+              <span className="text-xs text-muted-foreground">
+                {credential.allowOverages === true
+                  ? '已开启 (Overages，余额耗尽后仍允许使用)'
+                  : credential.allowOverages === false
+                    ? '已关闭 (强制按余额禁用)'
+                    : '使用全局默认'}
+              </span>
             </div>
             {credential.hasProxy && (
               <div className="col-span-2">

@@ -55,6 +55,24 @@ export async function setCredentialDisabled(
   return data
 }
 
+/**
+ * 设置凭据级"允许超额使用"开关
+ *
+ * - `true`：开启 Overages，余额耗尽后也不会被自动禁用
+ * - `false`：强制按余额禁用
+ * - `null`：恢复为按全局 disableOnInsufficientBalance 决策
+ */
+export async function setCredentialAllowOverages(
+  id: number,
+  allowOverages: boolean | null
+): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(
+    `/credentials/${id}/allow-overages`,
+    { allowOverages }
+  )
+  return data
+}
+
 // 设置凭据优先级
 export async function setCredentialPriority(
   id: number,

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **/v1/models 改为实时拉取上游模型列表（带 5 分钟缓存）** — 新增 `KiroProvider::list_available_models()`，在请求 `/v1/models` 时调用上游 `q.{region}.amazonaws.com/ListAvailableModels` 实时获取模型；上游不可达或返回空时回退到内置静态列表，保留旧客户端的模型 ID 兼容性 (`src/kiro/models.rs`, `src/kiro/provider.rs`, `src/anthropic/handlers.rs`)
+- **凭据级 `allowOverages` 开关** — `KiroCredentials.allow_overages: Option<bool>`，开启后即使余额耗尽也不会自动禁用，适合在 Kiro 控制台启用 Overages 的账号；新增 `POST /api/admin/credentials/:id/allow-overages` 接口，admin UI 凭据卡片新增对应开关 (`src/kiro/model/credentials.rs`, `src/admin/*`, `admin-ui/src/components/credential-card.tsx`)
+- **全局 `disableOnInsufficientBalance` 配置项** — 默认 `true` 保持原行为；设为 `false` 时全局禁用"低余额自动禁用"逻辑，凭据级 `allowOverages` 优先级更高 (`src/model/config.rs`, `src/kiro/token_manager.rs`)
+- **余额展示支持负数** — admin API 与 admin UI 不再将 `remaining` 截到 0，超额时显示真实负值，红色提示"已超额 N" (`src/admin/service.rs`, `src/kiro/token_manager.rs`, `admin-ui/src/components/credential-card.tsx`, `admin-ui/src/components/balance-dialog.tsx`)
+
+### Changed
+- **Docker 构建工作流** — 默认推送至 GHCR（`ghcr.io/<owner>/<repo>`，使用 `GITHUB_TOKEN`），阿里云仓库改为可选（缺 secret 时自动跳过）；新增 `workflow_dispatch` 手动触发与 `main`/`master` 分支推送时自动构建 `:dev` 镜像 (`.github/workflows/docker-build.yml`)
+- **docker-compose.yml** — 镜像默认指向 GHCR 当前仓库，`IMAGE_OWNER` 改为必填变量
+
 ## [v1.1.30] - 2026-05-08
 
 ### Fixed

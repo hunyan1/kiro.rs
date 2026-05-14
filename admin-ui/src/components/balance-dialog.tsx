@@ -87,9 +87,12 @@ export function BalanceDialog({ credentialId, open, onOpenChange, forceRefresh }
             <div className="grid grid-cols-2 gap-4 pt-4 border-t text-sm">
               <div>
                 <span className="text-muted-foreground">剩余额度：</span>
-                <span className="font-medium text-green-600">
+                <span className={`font-medium ${balance.remaining < 0 ? 'text-red-600' : 'text-green-600'}`}>
                   ${formatNumber(balance.remaining)}
                 </span>
+                {balance.remaining < 0 && (
+                  <span className="text-xs text-red-500 ml-1">(已超额)</span>
+                )}
               </div>
               <div>
                 <span className="text-muted-foreground">下次重置：</span>

@@ -24,6 +24,9 @@ data/
 
 refs/
 
+# 参考项目，不入 git
+/Kiro-account-manager/
+
 # Python
 __pycache__/
 *.pyc

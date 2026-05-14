@@ -628,13 +628,120 @@ fn strip_empty_text_content_blocks(messages: &mut [super::types::Message]) -> us
 /// GET /v1/models
 ///
 /// 返回可用的模型列表。
-pub async fn get_models(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
+///
+/// 优先从 Kiro 上游 `ListAvailableModels` 实时拉取（带 5 分钟缓存），
+/// 失败或返回空时回退到内置静态列表，保障客户端可用性。
+pub async fn get_models(
+    OriginalUri(uri): OriginalUri,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     tracing::info!(
         path = %uri.path(),
         "Received request"
     );
 
-    let models = vec![
+    let static_models = build_static_models();
+
+    let dynamic_models: Vec<Model> = match &state.kiro_provider {
+        Some(provider) => match provider.list_available_models().await {
+            Ok(list) if !list.is_empty() => {
+                tracing::info!(count = list.len(), "已从上游获取动态模型列表");
+                build_dynamic_models(list)
+            }
+            Ok(_) => {
+                tracing::info!("上游返回空模型列表，使用静态兜底");
+                Vec::new()
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "拉取上游模型失败，使用静态兜底");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+
+    // 合并：动态优先；静态列表中不重复的补在后面（用于向后兼容旧客户端的 model id）
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut merged: Vec<Model> = Vec::with_capacity(dynamic_models.len() + static_models.len());
+    for m in dynamic_models {
+        if seen.insert(m.id.clone()) {
+            merged.push(m);
+        }
+    }
+    for m in static_models {
+        if seen.insert(m.id.clone()) {
+            merged.push(m);
+        }
+    }
+
+    Json(ModelsResponse {
+        object: "list".to_string(),
+        data: merged,
+    })
+}
+
+/// 把上游 KiroModelInfo 列表展开为 Anthropic 风格的 Model 列表
+/// 支持 thinking 时额外派生 `-thinking` / `-agentic` 变体（与静态列表保持一致）。
+fn build_dynamic_models(
+    upstream: Vec<crate::kiro::models::KiroModelInfo>,
+) -> Vec<Model> {
+    let now = chrono::Utc::now().timestamp();
+    let mut out: Vec<Model> = Vec::new();
+    for info in upstream {
+        let supports_thinking = info.supports_thinking();
+        let max_input = info
+            .token_limits
+            .as_ref()
+            .and_then(|t| t.max_input_tokens)
+            .filter(|v| *v > 0)
+            .map(|v| v as i32);
+        let max_output = info
+            .token_limits
+            .as_ref()
+            .and_then(|t| t.max_output_tokens)
+            .filter(|v| *v > 0)
+            .map(|v| v as i32);
+        let display = info
+            .model_name
+            .clone()
+            .unwrap_or_else(|| info.model_id.clone());
+        let id = info.model_id.clone();
+
+        let make = |suffix: Option<&str>| Model {
+            id: match suffix {
+                Some(s) => format!("{id}-{s}"),
+                None => id.clone(),
+            },
+            object: "model".to_string(),
+            created: now,
+            owned_by: info
+                .model_provider
+                .clone()
+                .unwrap_or_else(|| "anthropic".to_string()),
+            display_name: match suffix {
+                Some("thinking") => format!("{display} (Thinking)"),
+                Some("agentic") => format!("{display} (Agentic)"),
+                _ => display.clone(),
+            },
+            model_type: "chat".to_string(),
+            max_tokens: max_output.unwrap_or(32_000),
+            context_length: max_input.or(Some(200_000)),
+            max_completion_tokens: max_output.or(Some(64_000)),
+            thinking: Some(supports_thinking),
+        };
+
+        out.push(make(None));
+        if supports_thinking {
+            out.push(make(Some("thinking")));
+            out.push(make(Some("agentic")));
+        }
+    }
+    out
+}
+
+/// 构造内置的静态模型列表（兜底用）
+fn build_static_models() -> Vec<Model> {
+    vec![
         Model {
             id: "claude-sonnet-4-6".to_string(),
             object: "model".to_string(),
@@ -851,12 +958,7 @@ pub async fn get_models(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
             max_completion_tokens: Some(64_000),
             thinking: Some(true),
         },
-    ];
-
-    Json(ModelsResponse {
-        object: "list".to_string(),
-        data: models,
-    })
+    ]
 }
 
 /// POST /v1/messages

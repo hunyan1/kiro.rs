@@ -104,6 +104,14 @@ pub struct KiroCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 
+    /// 凭据级"允许超额使用"开关
+    ///
+    /// - `None`：按全局 `disableOnInsufficientBalance` 行为决定（默认 true 即低余额自动禁用）
+    /// - `Some(true)`：该凭据开启了 Overages，余额不足时也不会自动禁用
+    /// - `Some(false)`：强制按余额禁用，即便全局允许超额
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_overages: Option<bool>,
+
     /// 凭据是否被禁用（默认为 false）
     #[serde(default)]
     pub disabled: bool,
