@@ -166,6 +166,9 @@ fn normalize_model_name(model: &str) -> String {
 /// - opus 且包含 4.5/4-5 → claude-opus-4.5，包含 4.7/4-7 → claude-opus-4.7，否则 → claude-opus-4.6
 /// - 所有 haiku → claude-haiku-4.5
 /// - `-thinking` / `-agentic` 后缀会被剥离后再映射
+/// - 其他未知名字（如 `deepseek-3.2`、`minimax-m2.5`、`glm-5`、`qwen3-coder-next`、`auto`）：
+///   去后缀后直通转发到上游，由上游决定是否支持
+/// - 明确无效的品牌名（`gpt-*`、未匹配规则的 `claude-*`）：返回 None，保持"模型不支持"错误
 pub fn map_model(model: &str) -> Option<String> {
     let normalized_model = normalize_model_name(model);
 
@@ -185,8 +188,14 @@ pub fn map_model(model: &str) -> Option<String> {
         }
     } else if normalized_model.contains("haiku") {
         Some(KIRO_MODEL_HAIKU_4_5.to_string())
-    } else {
+    } else if normalized_model.starts_with("gpt-") || normalized_model.starts_with("claude-") {
+        // 已知品牌但不在 Anthropic 模型规则里 → 明确拒绝
+        // 保留对错误模型 ID 的清晰错误信息
         None
+    } else {
+        // 其他模型名（deepseek-*、minimax-*、glm-*、qwen3-*、auto 等）
+        // 直通转发到上游，由 Kiro 服务端决定是否支持
+        Some(normalized_model)
     }
 }
 
@@ -1529,6 +1538,35 @@ mod tests {
     #[test]
     fn test_map_model_unsupported() {
         assert!(map_model("gpt-4").is_none());
+    }
+
+    #[test]
+    fn test_map_model_passthrough_for_upstream_models() {
+        // 上游 ListAvailableModels 返回的非 Anthropic 模型应直通转发
+        assert_eq!(map_model("deepseek-3.2"), Some("deepseek-3.2".to_string()));
+        assert_eq!(map_model("minimax-m2.5"), Some("minimax-m2.5".to_string()));
+        assert_eq!(map_model("glm-5"), Some("glm-5".to_string()));
+        assert_eq!(
+            map_model("qwen3-coder-next"),
+            Some("qwen3-coder-next".to_string())
+        );
+        assert_eq!(map_model("auto"), Some("auto".to_string()));
+
+        // 后缀剥离后再直通
+        assert_eq!(
+            map_model("deepseek-3.2-thinking"),
+            Some("deepseek-3.2".to_string())
+        );
+        assert_eq!(
+            map_model("minimax-m2.5-agentic"),
+            Some("minimax-m2.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_model_unknown_claude_still_rejected() {
+        // 未匹配规则的 claude-* 名字仍然返回 None，保持清晰错误
+        assert!(map_model("claude-fake-model-xyz").is_none());
     }
 
     #[test]

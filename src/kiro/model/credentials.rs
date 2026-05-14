@@ -388,6 +388,7 @@ mod tests {
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
+            allow_overages: None,
             disabled: false,
             runtime_only: false,
         };
@@ -508,6 +509,7 @@ mod tests {
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
+            allow_overages: None,
             disabled: false,
             runtime_only: false,
         };
@@ -540,6 +542,7 @@ mod tests {
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
+            allow_overages: None,
             disabled: false,
             runtime_only: false,
         };
@@ -658,6 +661,7 @@ mod tests {
             proxy_url: None,
             proxy_username: None,
             proxy_password: None,
+            allow_overages: None,
             disabled: false,
             runtime_only: false,
         };
