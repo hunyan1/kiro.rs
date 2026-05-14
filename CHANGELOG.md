@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.1.32] - 2026-05-14
+
+### Fixed
+- **`/v1/models` 列表里的非 Anthropic 模型转发失败** — `map_model()` 之前对 `deepseek-3.2`、`minimax-m2.5`、`glm-5`、`qwen3-coder-next`、`auto` 等上游真实在售但非 Claude 系列的模型直接返回 `UnsupportedModel`，导致前一版本里 `/v1/models` 显示但 `POST /v1/messages` 报"模型不支持"。现在未匹配 Anthropic 命名规则的模型会剥离 `-thinking` / `-agentic` 后缀后直通转发到 Kiro 上游；`gpt-*` 和未知 `claude-*` 仍返回明确错误 (`src/anthropic/converter.rs`)
+
 ## [v1.1.31] - 2026-05-14
 
 ### Added
