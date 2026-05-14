@@ -24,6 +24,9 @@ data/
 
 refs/
 
+# Kiro IDE 工作区配置（仅本地，不入库）
+/.kiro/
+
 # 参考项目，不入 git
 /Kiro-account-manager/
 
